@@ -40,6 +40,9 @@
   // === Edit mode state ===
   let imagineMode = 'generate'; // 'generate' or 'edit'
   let editImageFile = null; // raw File object for upload
+  let editOriginalImageSrc = null; // 存储原图 base64 用于对比
+  let editOriginalFileName = null; // 存储原始文件名（不含扩展名）
+  let editImageCounter = 0; // 编辑图片计数器
   const imagineModeBtns = document.querySelectorAll('.imagine-mode-btn');
   const editImageUpload = document.getElementById('editImageUpload');
   const editUploadArea = document.getElementById('editUploadArea');
@@ -78,9 +81,16 @@
       return;
     }
     editImageFile = file;
+    // 提取原始文件名（不含扩展名）
+    const fileName = file.name || 'image';
+    const lastDot = fileName.lastIndexOf('.');
+    editOriginalFileName = lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
+    editImageCounter = 0; // 重置计数器
     const reader = new FileReader();
     reader.onload = (e) => {
       if (editPreviewImg) editPreviewImg.src = e.target.result;
+      // 保存原图用于对比功能
+      editOriginalImageSrc = e.target.result;
       if (editUploadPlaceholder) editUploadPlaceholder.classList.add('hidden');
       if (editPreviewContainer) editPreviewContainer.classList.remove('hidden');
     };
@@ -89,6 +99,9 @@
 
   function removeEditImage() {
     editImageFile = null;
+    editOriginalImageSrc = null; // 清除原图引用
+    editOriginalFileName = null; // 清除原始文件名
+    editImageCounter = 0; // 重置计数器
     if (editFileInput) editFileInput.value = '';
     if (editPreviewImg) editPreviewImg.src = '';
     if (editPreviewContainer) editPreviewContainer.classList.add('hidden');
@@ -277,8 +290,10 @@
   }
 
   async function saveToFileSystem(base64, filename) {
+    console.log('[SaveFS] 尝试保存到自定义文件夹:', filename, 'directoryHandle:', directoryHandle?.name);
     try {
       if (!directoryHandle) {
+        console.log('[SaveFS] 无 directoryHandle, 跳过');
         return false;
       }
       
@@ -308,6 +323,7 @@
   }
 
   function downloadImage(base64, filename) {
+    console.log('[Download] 浏览器默认下载:', filename, 'base64 length:', base64.length);
     const mime = inferMime(base64);
     const dataUrl = `data:${mime};base64,${base64}`;
     const link = document.createElement('a');
@@ -317,6 +333,7 @@
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    console.log('[Download] <a> click 已触发, 文件名:', filename);
   }
 
   function appendImage(base64, meta) {
@@ -357,6 +374,70 @@
     item.appendChild(img);
     item.appendChild(metaBar);
 
+    // 生成下载文件名
+    let downloadFileName;
+    const ext = mime === 'image/png' ? 'png' : 'jpg';
+    if (imagineMode === 'edit' && editOriginalFileName) {
+      editImageCounter++;
+      const suffix = editImageCounter === 1 ? '_edit' : `_edit${editImageCounter}`;
+      downloadFileName = `${editOriginalFileName}${suffix}.${ext}`;
+    } else {
+      const timestamp = Date.now();
+      const seq = meta && meta.sequence ? meta.sequence : imageCount;
+      downloadFileName = `imagine_${timestamp}_${seq}.${ext}`;
+    }
+
+    // 添加下载按钮（右上角）
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'waterfall-download-btn';
+    downloadBtn.title = '下载图片';
+    downloadBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+    `;
+    downloadBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      console.log('[DownloadBtn] 点击下载, useFileSystemAPI:', useFileSystemAPI, 'directoryHandle:', directoryHandle?.name, 'fileName:', downloadFileName);
+      if (useFileSystemAPI && directoryHandle) {
+        const saved = await saveToFileSystem(base64, downloadFileName);
+        if (saved) {
+          toast(`已保存到 ${directoryHandle.name}/${downloadFileName}`, 'success');
+        } else {
+          downloadImage(base64, downloadFileName);
+          toast(`已下载到浏览器默认位置: ${downloadFileName}`, 'success');
+        }
+      } else {
+        downloadImage(base64, downloadFileName);
+        toast(`已下载到浏览器默认位置: ${downloadFileName}`, 'success');
+      }
+    });
+    item.appendChild(downloadBtn);
+    // 存储下载文件名
+    item.dataset.downloadFileName = downloadFileName;
+
+    // 编辑模式下添加对比按钮
+    if (imagineMode === 'edit' && editOriginalImageSrc) {
+      const compareBtn = document.createElement('button');
+      compareBtn.className = 'waterfall-compare-btn visible';
+      compareBtn.title = '对比原图';
+      compareBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="8" height="18" rx="1"></rect>
+          <rect x="13" y="3" width="8" height="18" rx="1"></rect>
+        </svg>
+      `;
+      compareBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCompareView(dataUrl);
+      });
+      item.appendChild(compareBtn);
+      // 存储原图引用到 item 上
+      item.dataset.originalImage = editOriginalImageSrc;
+    }
+
     const prompt = (meta && meta.prompt) ? String(meta.prompt) : (promptInput ? promptInput.value.trim() : '');
     item.dataset.imageUrl = dataUrl;
     item.dataset.prompt = prompt || 'image';
@@ -371,17 +452,13 @@
     }
 
     if (autoDownloadToggle && autoDownloadToggle.checked) {
-      const timestamp = Date.now();
-      const seq = meta && meta.sequence ? meta.sequence : 'unknown';
-      const ext = mime === 'image/png' ? 'png' : 'jpg';
-      const filename = `imagine_${timestamp}_${seq}.${ext}`;
-      
+      // 使用已生成的下载文件名
       if (useFileSystemAPI && directoryHandle) {
-        saveToFileSystem(base64, filename).catch(() => {
-          downloadImage(base64, filename);
+        saveToFileSystem(base64, downloadFileName).catch(() => {
+          downloadImage(base64, downloadFileName);
         });
       } else {
-        downloadImage(base64, filename);
+        downloadImage(base64, downloadFileName);
       }
     }
   }
@@ -685,6 +762,7 @@
     formData.append('model', 'grok-imagine-1.0-edit');
     formData.append('n', '1');
     formData.append('response_format', 'b64_json');
+    formData.append('size', 'original'); // 保持原图尺寸
 
     try {
       const res = await fetch('/v1/images/edits', {
@@ -1078,24 +1156,104 @@
   // Lightbox for image preview with navigation
   const lightboxPrev = document.getElementById('lightboxPrev');
   const lightboxNext = document.getElementById('lightboxNext');
+  const lightboxCompareBtn = document.getElementById('lightboxCompareBtn');
+  const lightboxCompareView = document.getElementById('lightboxCompareView');
+  const compareOriginalImg = document.getElementById('compareOriginalImg');
+  const compareEditedImg = document.getElementById('compareEditedImg');
   let currentImageIndex = -1;
-  
+  let isCompareMode = false;
+
   function getAllImages() {
     return Array.from(document.querySelectorAll('.waterfall-item img'));
   }
-  
+
+  function getAllWaterfallItems() {
+    return Array.from(document.querySelectorAll('.waterfall-item'));
+  }
+
   function updateLightbox(index) {
     const images = getAllImages();
     if (index < 0 || index >= images.length) return;
-    
+
     currentImageIndex = index;
     lightboxImg.src = images[index].src;
-    
+
+    // 检查当前图片是否有原图（编辑模式产生的）
+    const items = getAllWaterfallItems();
+    const currentItem = items[index];
+    const hasOriginal = currentItem && currentItem.dataset.originalImage;
+
+    // 显示/隐藏对比按钮
+    if (lightboxCompareBtn) {
+      if (hasOriginal) {
+        lightboxCompareBtn.classList.remove('hidden');
+      } else {
+        lightboxCompareBtn.classList.add('hidden');
+        // 如果没有原图，退出对比模式
+        if (isCompareMode) {
+          exitCompareMode();
+        }
+      }
+    }
+
+    // 如果在对比模式下切换图片，更新对比视图
+    if (isCompareMode && hasOriginal) {
+      updateCompareView(currentItem.dataset.originalImage, images[index].src);
+    }
+
     // Update navigation buttons state
     if (lightboxPrev) lightboxPrev.disabled = (index === 0);
     if (lightboxNext) lightboxNext.disabled = (index === images.length - 1);
   }
-  
+
+  function updateCompareView(originalSrc, editedSrc) {
+    if (compareOriginalImg) compareOriginalImg.src = originalSrc;
+    if (compareEditedImg) compareEditedImg.src = editedSrc;
+  }
+
+  function enterCompareMode() {
+    isCompareMode = true;
+    const items = getAllWaterfallItems();
+    const currentItem = items[currentImageIndex];
+
+    if (currentItem && currentItem.dataset.originalImage) {
+      const images = getAllImages();
+      updateCompareView(currentItem.dataset.originalImage, images[currentImageIndex].src);
+
+      if (lightboxImg) lightboxImg.style.display = 'none';
+      if (lightboxCompareView) lightboxCompareView.classList.remove('hidden');
+      if (lightboxCompareBtn) lightboxCompareBtn.classList.add('active');
+    }
+  }
+
+  function exitCompareMode() {
+    isCompareMode = false;
+    if (lightboxImg) lightboxImg.style.display = '';
+    if (lightboxCompareView) lightboxCompareView.classList.add('hidden');
+    if (lightboxCompareBtn) lightboxCompareBtn.classList.remove('active');
+  }
+
+  function toggleCompareMode() {
+    if (isCompareMode) {
+      exitCompareMode();
+    } else {
+      enterCompareMode();
+    }
+  }
+
+  function openCompareView(editedImageSrc) {
+    // 从瀑布流直接打开对比视图
+    const images = getAllImages();
+    const index = images.findIndex(img => img.src === editedImageSrc);
+
+    if (index !== -1) {
+      updateLightbox(index);
+      lightbox.classList.add('active');
+      // 自动进入对比模式
+      enterCompareMode();
+    }
+  }
+
   function showPrevImage() {
     if (currentImageIndex > 0) {
       updateLightbox(currentImageIndex - 1);
@@ -1114,11 +1272,13 @@
       e.stopPropagation();
       lightbox.classList.remove('active');
       currentImageIndex = -1;
+      exitCompareMode(); // 关闭时重置对比模式
     });
 
     lightbox.addEventListener('click', () => {
       lightbox.classList.remove('active');
       currentImageIndex = -1;
+      exitCompareMode(); // 关闭时重置对比模式
     });
 
     // Prevent closing when clicking on the image
@@ -1127,7 +1287,22 @@
         e.stopPropagation();
       });
     }
-    
+
+    // Prevent closing when clicking on compare view
+    if (lightboxCompareView) {
+      lightboxCompareView.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    // Compare button
+    if (lightboxCompareBtn) {
+      lightboxCompareBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleCompareMode();
+      });
+    }
+
     // Navigation buttons
     if (lightboxPrev) {
       lightboxPrev.addEventListener('click', (e) => {
@@ -1135,7 +1310,7 @@
         showPrevImage();
       });
     }
-    
+
     if (lightboxNext) {
       lightboxNext.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1146,14 +1321,20 @@
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
       if (!lightbox.classList.contains('active')) return;
-      
+
       if (e.key === 'Escape') {
         lightbox.classList.remove('active');
         currentImageIndex = -1;
+        exitCompareMode(); // ESC 关闭时重置对比模式
       } else if (e.key === 'ArrowLeft') {
         showPrevImage();
       } else if (e.key === 'ArrowRight') {
         showNextImage();
+      } else if (e.key === 'c' || e.key === 'C') {
+        // 按 C 键切换对比模式
+        if (lightboxCompareBtn && !lightboxCompareBtn.classList.contains('hidden')) {
+          toggleCompareMode();
+        }
       }
     });
   }

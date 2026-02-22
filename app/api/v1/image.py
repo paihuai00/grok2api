@@ -26,6 +26,7 @@ from app.services.grok.processors import (
     ImageWSStreamProcessor,
     ImageWSCollectProcessor,
 )
+from app.services.image import ImageProcessor
 from app.services.token import get_token_manager, EffortType
 from app.core.exceptions import ValidationException, AppException, ErrorType
 from app.core.config import get_config
@@ -158,6 +159,9 @@ def response_field_name(response_format: str) -> str:
 def resolve_aspect_ratio(size: str) -> str:
     """Map OpenAI size to Grok Imagine aspect ratio."""
     size = (size or "").lower()
+    # 支持 original 选项，返回特殊标记
+    if size == "original":
+        return "original"
     if size in {"16:9", "9:16", "1:1", "2:3", "3:2"}:
         return size
     mapping = {
@@ -246,6 +250,70 @@ async def _get_token(model: str):
         )
 
     return token_mgr, token
+
+
+def _scale_result_to_original(
+    image_data: str,
+    original_dimensions: tuple,
+    response_format: str,
+) -> str:
+    """
+    将结果图像缩放回原图尺寸。
+
+    Args:
+        image_data: base64 编码的图像或 URL
+        original_dimensions: (width, height) 原图尺寸
+        response_format: 响应格式 (b64_json, base64, url)
+
+    Returns:
+        缩放后的图像数据（base64 格式，URL 格式会转换为 base64）
+    """
+    import httpx
+
+    target_width, target_height = original_dimensions
+
+    # 如果是 URL 格式，需要先下载图像
+    if response_format == "url":
+        try:
+            # 同步下载图像
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(image_data)
+                resp.raise_for_status()
+                image_bytes = resp.content
+        except Exception as e:
+            logger.warning(f"Failed to download image for scaling: {e}")
+            # 下载失败，返回原 URL（但这会导致尺寸不对）
+            return image_data
+
+        # 缩放到原图尺寸
+        scaled_bytes = ImageProcessor.scale_image(
+            image_bytes, target_width, target_height, output_format="PNG"
+        )
+
+        # 返回 base64（URL 格式转换为 base64）
+        scaled_b64 = base64.b64encode(scaled_bytes).decode()
+        return scaled_b64
+
+    # base64 格式处理
+    # 移除可能的 data URI 前缀
+    if image_data.startswith("data:"):
+        # 格式: data:image/png;base64,xxxxx
+        _, b64_data = image_data.split(",", 1)
+    else:
+        b64_data = image_data
+
+    # 解码图像
+    image_bytes = base64.b64decode(b64_data)
+
+    # 缩放到原图尺寸
+    scaled_bytes = ImageProcessor.scale_image(
+        image_bytes, target_width, target_height, output_format="PNG"
+    )
+
+    # 重新编码为 base64
+    scaled_b64 = base64.b64encode(scaled_bytes).decode()
+
+    return scaled_b64
 
 
 async def call_grok(
@@ -545,6 +613,11 @@ async def edit_image(
     # 参数验证
     validate_edit_request(edit_request, image)
 
+    # 检查是否使用原图尺寸模式
+    use_original_size = resolve_aspect_ratio(edit_request.size) == "original"
+    original_dimensions = None  # 保存原图尺寸用于后处理
+    actual_aspect_ratio = None  # 实际使用的宽高比
+
     max_image_bytes = 50 * 1024 * 1024
     allowed_types = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
 
@@ -581,6 +654,28 @@ async def edit_image(
                     param="image",
                     code="invalid_image_type",
                 )
+
+        # 原图尺寸模式：预处理图像
+        if use_original_size:
+            # 只对第一张图检测原图尺寸（用于后处理）
+            if original_dimensions is None:
+                scaled_content, actual_aspect_ratio, original_dimensions = (
+                    ImageProcessor.scale_image_for_original(content)
+                )
+                logger.debug(
+                    f"Original size mode: {original_dimensions} -> ratio {actual_aspect_ratio}"
+                )
+                content = scaled_content
+                # 缩放后的图像使用 PNG 格式
+                mime = "image/png"
+            else:
+                # 后续图像也需要缩放到相同尺寸
+                target_size = ImageProcessor.get_target_size(actual_aspect_ratio)
+                content = ImageProcessor.scale_image(
+                    content, target_size[0], target_size[1]
+                )
+                mime = "image/png"
+
         b64 = base64.b64encode(content).decode()
         images.append(f"data:{mime};base64,{b64}")
 
@@ -730,6 +825,30 @@ async def edit_image(
         selected_images = all_images.copy()
         while len(selected_images) < n:
             selected_images.append("error")
+
+    # 原图尺寸模式：后处理 - 将结果缩放回原图尺寸
+    if use_original_size and original_dimensions:
+        logger.info(f"Original size post-processing: scaling results back to {original_dimensions}")
+        processed_images = []
+        for img in selected_images:
+            if img == "error":
+                processed_images.append(img)
+                continue
+            try:
+                logger.debug(f"Scaling image, response_format={response_format}, img_type={type(img)}, img_len={len(img) if isinstance(img, str) else 'N/A'}")
+                processed_img = _scale_result_to_original(
+                    img, original_dimensions, response_format
+                )
+                logger.debug(f"Scaled image result len={len(processed_img) if isinstance(processed_img, str) else 'N/A'}")
+                processed_images.append(processed_img)
+            except Exception as e:
+                logger.warning(f"Failed to scale result to original size: {e}", exc_info=True)
+                processed_images.append(img)  # 保留原结果
+        selected_images = processed_images
+        # 缩放后的结果是 base64 格式，更新响应字段名
+        response_field = "b64_json"
+    else:
+        logger.debug(f"Skipping original size post-processing: use_original_size={use_original_size}, original_dimensions={original_dimensions}")
 
     data = [{response_field: img} for img in selected_images]
 

@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/imagine/imagine.css?v=4" rel="stylesheet">
+  <link href="/static/imagine/imagine.css?v=6" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -168,6 +168,13 @@
         <line x1="6" y1="6" x2="18" y2="18"></line>
       </svg>
     </button>
+    <!-- 对比按钮 - 仅编辑模式显示 -->
+    <button class="lightbox-compare-btn hidden" id="lightboxCompareBtn" title="对比原图">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="8" height="18" rx="1"></rect>
+        <rect x="13" y="3" width="8" height="18" rx="1"></rect>
+      </svg>
+    </button>
     <button class="lightbox-nav lightbox-prev" id="lightboxPrev">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="15 18 9 12 15 6"></polyline>
@@ -178,7 +185,19 @@
         <polyline points="9 18 15 12 9 6"></polyline>
       </svg>
     </button>
+    <!-- 单图预览 -->
     <img id="lightboxImg" src="" alt="">
+    <!-- 并排对比视图 -->
+    <div id="lightboxCompareView" class="lightbox-compare-view hidden">
+      <div class="compare-item">
+        <div class="compare-label">原图</div>
+        <img id="compareOriginalImg" src="" alt="原图">
+      </div>
+      <div class="compare-item">
+        <div class="compare-label">编辑后</div>
+        <img id="compareEditedImg" src="" alt="编辑后">
+      </div>
+    </div>
   </div>
 
   <div id="floatingActions" class="floating-actions">
@@ -224,7 +243,7 @@
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="/static/imagine/imagine.js?v=8"></script>
+  <script src="/static/imagine/imagine.js?v=11"></script>
 </body>
 
 </html>

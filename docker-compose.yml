@@ -2,8 +2,10 @@ services:
   grok2api:
     container_name: grok2api
     image: ghcr.io/wangxingfan/grok2api:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["uv pip install pillow httpx --quiet && /app/scripts/init_storage.sh && exec python main.py"]
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       TZ: Asia/Shanghai
       LOG_LEVEL: INFO
@@ -11,7 +13,7 @@ services:
       SERVER_WORKERS: 1
       SERVER_STORAGE_TYPE: local
       # SERVER_STORAGE_URL:
-      # SITE_MODE: private  # public = playground pages open without login; private = all pages require login
+      SITE_MODE: public  # public = playground pages open without login; private = all pages require login
 
       # SERVER_STORAGE_TYPE: (local, redis, mysql, pgsql) default: local
       # SERVER_STORAGE_URL: (local mode is empty) default: empty
@@ -21,4 +23,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./app:/app/app
+      - ./config.defaults.toml:/app/config.defaults.toml
     restart: unless-stopped
