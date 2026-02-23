@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/imagine/imagine.css?v=6" rel="stylesheet">
+  <link href="/static/imagine/imagine.css?v=10" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -35,6 +35,7 @@
               <div class="imagine-mode-toggle">
                 <button class="imagine-mode-btn active" data-imagine-mode="generate">生成</button>
                 <button class="imagine-mode-btn" data-imagine-mode="edit">编辑</button>
+                <button class="imagine-mode-btn" data-imagine-mode="batch">批量编辑</button>
               </div>
               <div class="settings-top">
                 <div class="settings-prompt">
@@ -58,6 +59,88 @@
                       </div>
                     </div>
                   </div>
+                  <!-- 批量编辑模式上传区域 -->
+                  <div id="batchImageUpload" class="batch-image-upload hidden">
+                    <label class="field-label">批量图片 <span style="font-weight:400;color:var(--accents-4);">（选择多张图片进行批量编辑）</span></label>
+                    <div class="batch-upload-buttons">
+                      <button id="batchSelectFilesBtn" class="geist-button-outline batch-upload-btn" type="button">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                          <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                          <polyline points="21 15 16 10 5 21"></polyline>
+                        </svg>
+                        多选图片
+                      </button>
+                      <button id="batchSelectDirBtn" class="geist-button-outline batch-upload-btn" type="button">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        选择目录
+                      </button>
+                      <input type="file" id="batchFileInput" accept="image/png,image/jpeg,image/webp" multiple style="display:none;">
+                    </div>
+                    <!-- 已选图片网格 -->
+                    <div id="batchGridContainer" class="batch-grid-container hidden">
+                      <div class="batch-grid-header">
+                        <span class="batch-grid-title">已选图片：<span id="batchImageCount">0</span> 张</span>
+                        <div class="batch-grid-actions">
+                          <button id="batchSelectAllBtn" class="geist-button-outline batch-action-btn" type="button">全选</button>
+                          <button id="batchClearBtn" class="geist-button-outline batch-action-btn" type="button">清空</button>
+                        </div>
+                      </div>
+                      <!-- 数量范围设置 -->
+                      <div class="batch-range-settings">
+                        <label class="field-label">处理范围</label>
+                        <div class="batch-range-inputs">
+                          <input type="number" id="batchRangeStart" class="geist-input batch-range-input" min="1" value="1" placeholder="起始">
+                          <span class="batch-range-sep">至</span>
+                          <input type="number" id="batchRangeEnd" class="geist-input batch-range-input" min="1" value="1" placeholder="结束">
+                          <span class="batch-range-total">/ <span id="batchTotalCount">0</span></span>
+                        </div>
+                        <div class="batch-options-row">
+                          <label class="toggle">
+                            <input id="batchSkipExisting" type="checkbox" checked>
+                            <span class="toggle-track"></span>
+                            <span class="toggle-label">跳过已存在</span>
+                          </label>
+                          <label class="toggle">
+                            <input id="batchShowPreview" type="checkbox">
+                            <span class="toggle-track"></span>
+                            <span class="toggle-label">显示缩略图</span>
+                          </label>
+                          <label class="toggle">
+                            <input id="batchMemorySaver" type="checkbox" checked>
+                            <span class="toggle-track"></span>
+                            <span class="toggle-label">省内存模式</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div id="batchGrid" class="batch-grid hidden"></div>
+                    </div>
+                    <!-- 进度条 -->
+                    <div id="batchProgressContainer" class="batch-progress-container hidden">
+                      <div class="batch-progress">
+                        <div id="batchProgressBar" class="batch-progress-bar" style="width: 0%"></div>
+                      </div>
+                      <span id="batchProgressText" class="batch-progress-text">准备中...</span>
+                    </div>
+                    <!-- 日志区域 -->
+                    <div id="batchLogContainer" class="batch-log-container hidden">
+                      <div class="batch-log-header">
+                        <span class="batch-log-title">处理日志</span>
+                        <div class="batch-log-actions">
+                          <button id="batchLogCopyBtn" class="batch-log-action-btn" type="button" title="复制日志">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
+                          <button id="batchLogClearBtn" class="batch-log-action-btn" type="button" title="清空日志">&times;</button>
+                        </div>
+                      </div>
+                      <div id="batchLogList" class="batch-log-list"></div>
+                    </div>
+                  </div>
                 </div>
                 <div class="settings-options">
                   <div>
@@ -73,9 +156,9 @@
                   <div>
                     <label class="field-label" for="concurrentSelect">并发数量</label>
                     <select id="concurrentSelect" class="geist-input">
-                      <option value="1" selected>1 个任务</option>
+                      <option value="1">1 个任务</option>
                       <option value="2">2 个任务</option>
-                      <option value="3">3 个任务</option>
+                      <option value="3" selected>3 个任务</option>
                     </select>
                   </div>
                 </div>
@@ -102,12 +185,21 @@
                 </div>
                 <div class="settings-folder">
                   <label class="field-label">保存位置</label>
-                  <button id="selectFolderBtn" class="geist-button-outline folder-select-btn" disabled>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                    </svg>
-                    <span id="folderPath">浏览器默认位置</span>
-                  </button>
+                  <div class="folder-select-row">
+                    <button id="selectFolderBtn" class="geist-button-outline folder-select-btn" disabled>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                      <span id="folderPath">浏览器默认位置</span>
+                    </button>
+                    <button id="lastFolderBtn" class="geist-button-outline last-folder-btn hidden" title="使用上次目录">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="1 4 1 10 7 10"></polyline>
+                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                      </svg>
+                      <span id="lastFolderName"></span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -153,6 +245,11 @@
         <div class="waterfall-header">
           <div class="card-title">瀑布流</div>
           <div class="waterfall-actions">
+            <label class="toggle toggle-compact">
+              <input id="waterfallShowPreview" type="checkbox">
+              <span class="toggle-track"></span>
+              <span class="toggle-label">显示预览</span>
+            </label>
           </div>
         </div>
         <div id="emptyState" class="imagine-empty">等待连接中...</div>
@@ -192,11 +289,14 @@
       <div class="compare-item">
         <div class="compare-label">原图</div>
         <img id="compareOriginalImg" src="" alt="原图">
+        <div class="compare-filename" id="compareOriginalName">-</div>
       </div>
       <div class="compare-item">
         <div class="compare-label">编辑后</div>
         <img id="compareEditedImg" src="" alt="编辑后">
+        <div class="compare-filename" id="compareEditedName">-</div>
       </div>
+      <div id="compareFolderPath" class="compare-folder-path"></div>
     </div>
   </div>
 
@@ -243,7 +343,7 @@
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="/static/imagine/imagine.js?v=11"></script>
+  <script src="/static/imagine/imagine.js?v=21"></script>
 </body>
 
 </html>

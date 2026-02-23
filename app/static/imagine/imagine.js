@@ -19,6 +19,7 @@
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = document.getElementById('lightboxImg');
   const closeLightbox = document.getElementById('closeLightbox');
+  const waterfallShowPreview = document.getElementById('waterfallShowPreview');
 
   let wsConnections = [];
   let sseConnections = [];
@@ -377,11 +378,16 @@
     // 生成下载文件名
     let downloadFileName;
     const ext = mime === 'image/png' ? 'png' : 'jpg';
-    if (imagineMode === 'edit' && editOriginalFileName) {
+    if (meta && meta.downloadFileName) {
+      // 优先使用传入的文件名（批量编辑模式）
+      downloadFileName = meta.downloadFileName;
+    } else if (imagineMode === 'edit' && editOriginalFileName) {
+      // 单张编辑模式：使用原文件名 + _edit 后缀
       editImageCounter++;
       const suffix = editImageCounter === 1 ? '_edit' : `_edit${editImageCounter}`;
       downloadFileName = `${editOriginalFileName}${suffix}.${ext}`;
     } else {
+      // 生成模式：使用 imagine_timestamp_seq 格式
       const timestamp = Date.now();
       const seq = meta && meta.sequence ? meta.sequence : imageCount;
       downloadFileName = `imagine_${timestamp}_${seq}.${ext}`;
@@ -418,8 +424,12 @@
     // 存储下载文件名
     item.dataset.downloadFileName = downloadFileName;
 
-    // 编辑模式下添加对比按钮
-    if (imagineMode === 'edit' && editOriginalImageSrc) {
+    // 添加对比按钮（如果有原图引用或文件索引）
+    const originalImageSrc = (meta && meta.originalImage) || (imagineMode === 'edit' && editOriginalImageSrc);
+    const originalFileIndex = meta && meta.originalFileIndex;
+    const hasOriginalRef = originalImageSrc || (typeof originalFileIndex === 'number');
+    
+    if (hasOriginalRef) {
       const compareBtn = document.createElement('button');
       compareBtn.className = 'waterfall-compare-btn visible';
       compareBtn.title = '对比原图';
@@ -434,8 +444,13 @@
         openCompareView(dataUrl);
       });
       item.appendChild(compareBtn);
-      // 存储原图引用到 item 上
-      item.dataset.originalImage = editOriginalImageSrc;
+      // 存储原图引用或文件索引到 item 上
+      if (originalImageSrc) {
+        item.dataset.originalImage = originalImageSrc;
+      }
+      if (typeof originalFileIndex === 'number') {
+        item.dataset.originalFileIndex = originalFileIndex;
+      }
     }
 
     const prompt = (meta && meta.prompt) ? String(meta.prompt) : (promptInput ? promptInput.value.trim() : '');
@@ -819,15 +834,7 @@
     }
   }
 
-  if (startBtn) {
-    startBtn.addEventListener('click', () => {
-      if (imagineMode === 'edit') {
-        startEditMode();
-      } else {
-        startConnection();
-      }
-    });
-  }
+  // startBtn 事件监听器移到批量编辑部分统一处理
 
   if (stopBtn) {
     stopBtn.addEventListener('click', () => {
@@ -843,7 +850,9 @@
     promptInput.addEventListener('keydown', (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
-        if (imagineMode === 'edit') {
+        if (imagineMode === 'batch') {
+          processBatch();
+        } else if (imagineMode === 'edit') {
           startEditMode();
         } else {
           startConnection();
@@ -899,27 +908,76 @@
   }
 
   // File System API support check
+  const lastFolderBtn = document.getElementById('lastFolderBtn');
+  const lastFolderName = document.getElementById('lastFolderName');
+  const LAST_FOLDER_KEY = 'imagine_last_folder';
+
+  // 更新目录选择 UI
+  function updateFolderUI(folderName, isActive) {
+    if (folderPath) {
+      folderPath.textContent = folderName || '浏览器默认位置';
+    }
+    if (selectFolderBtn) {
+      selectFolderBtn.style.color = isActive ? '#059669' : '';
+    }
+    // 保存到 localStorage
+    if (folderName) {
+      try {
+        localStorage.setItem(LAST_FOLDER_KEY, folderName);
+      } catch (e) {}
+    }
+    // 更新上次目录按钮
+    updateLastFolderBtn();
+  }
+
+  // 更新上次目录按钮显示
+  function updateLastFolderBtn() {
+    if (!lastFolderBtn || !lastFolderName) return;
+    
+    try {
+      const lastFolder = localStorage.getItem(LAST_FOLDER_KEY);
+      if (lastFolder && (!directoryHandle || directoryHandle.name !== lastFolder)) {
+        lastFolderName.textContent = lastFolder;
+        lastFolderBtn.classList.remove('hidden');
+      } else {
+        lastFolderBtn.classList.add('hidden');
+      }
+    } catch (e) {
+      lastFolderBtn.classList.add('hidden');
+    }
+  }
+
+  // 选择目录的公共函数
+  async function selectDirectory() {
+    try {
+      directoryHandle = await window.showDirectoryPicker({
+        mode: 'readwrite'
+      });
+      useFileSystemAPI = true;
+      updateFolderUI(directoryHandle.name, true);
+      toast('已选择文件夹: ' + directoryHandle.name, 'success');
+      return true;
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        toast('选择文件夹失败', 'error');
+      }
+      return false;
+    }
+  }
+
   if ('showDirectoryPicker' in window) {
     if (selectFolderBtn) {
       selectFolderBtn.disabled = false;
-      selectFolderBtn.addEventListener('click', async () => {
-        try {
-          directoryHandle = await window.showDirectoryPicker({
-            mode: 'readwrite'
-          });
-          useFileSystemAPI = true;
-          if (folderPath) {
-            folderPath.textContent = directoryHandle.name;
-            selectFolderBtn.style.color = '#059669';
-          }
-          toast('已选择文件夹: ' + directoryHandle.name, 'success');
-        } catch (e) {
-          if (e.name !== 'AbortError') {
-            toast('选择文件夹失败', 'error');
-          }
-        }
-      });
+      selectFolderBtn.addEventListener('click', selectDirectory);
     }
+
+    // 上次目录按钮
+    if (lastFolderBtn) {
+      lastFolderBtn.addEventListener('click', selectDirectory);
+    }
+
+    // 初始化显示上次目录
+    updateLastFolderBtn();
   }
 
   // Enable/disable folder selection based on auto-download
@@ -1160,6 +1218,9 @@
   const lightboxCompareView = document.getElementById('lightboxCompareView');
   const compareOriginalImg = document.getElementById('compareOriginalImg');
   const compareEditedImg = document.getElementById('compareEditedImg');
+  const compareOriginalName = document.getElementById('compareOriginalName');
+  const compareEditedName = document.getElementById('compareEditedName');
+  const compareFolderPath = document.getElementById('compareFolderPath');
   let currentImageIndex = -1;
   let isCompareMode = false;
 
@@ -1206,19 +1267,84 @@
     if (lightboxNext) lightboxNext.disabled = (index === images.length - 1);
   }
 
-  function updateCompareView(originalSrc, editedSrc) {
+  function updateCompareView(originalSrc, editedSrc, originalName, editedName, folderPath) {
     if (compareOriginalImg) compareOriginalImg.src = originalSrc;
     if (compareEditedImg) compareEditedImg.src = editedSrc;
+    if (compareOriginalName) compareOriginalName.textContent = originalName || '原图';
+    if (compareEditedName) compareEditedName.textContent = editedName || '编辑后';
+    if (compareFolderPath) {
+      if (folderPath) {
+        compareFolderPath.textContent = `📁 ${folderPath}`;
+        compareFolderPath.style.display = '';
+      } else {
+        compareFolderPath.style.display = 'none';
+      }
+    }
   }
 
-  function enterCompareMode() {
+  // 从文件索引按需读取原图
+  async function readOriginalImageFromFile(fileIndex) {
+    if (fileIndex < 0 || fileIndex >= batchFiles.length) return null;
+    const file = batchFiles[fileIndex];
+    if (!file) return null;
+    
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function enterCompareMode() {
     isCompareMode = true;
     const items = getAllWaterfallItems();
     const currentItem = items[currentImageIndex];
 
-    if (currentItem && currentItem.dataset.originalImage) {
+    if (!currentItem) return;
+
+    // 获取原图来源：直接存储的 base64 或 文件索引
+    let originalImageSrc = currentItem.dataset.originalImage;
+    const originalFileIndex = currentItem.dataset.originalFileIndex;
+
+    // 省内存模式：按需从文件读取
+    if (!originalImageSrc && originalFileIndex !== undefined) {
+      const idx = parseInt(originalFileIndex, 10);
+      if (!isNaN(idx)) {
+        // 显示加载状态
+        if (compareOriginalImg) {
+          compareOriginalImg.src = '';
+          compareOriginalImg.alt = '加载中...';
+        }
+        originalImageSrc = await readOriginalImageFromFile(idx);
+      }
+    }
+
+    if (originalImageSrc) {
       const images = getAllImages();
-      updateCompareView(currentItem.dataset.originalImage, images[currentImageIndex].src);
+      
+      // 获取文件名信息
+      const downloadFileName = currentItem.dataset.downloadFileName || '编辑后';
+      // 尝试获取原始文件名（从编辑后文件名推断）
+      let originalName = '原图';
+      if (downloadFileName) {
+        // 如果是 xxx_edit.png 格式，原文件名为 xxx.png
+        const match = downloadFileName.match(/^(.+?)(_edit\d*)?\.(\w+)$/);
+        if (match) {
+          originalName = `${match[1]}.${match[3]}`;
+        }
+      }
+      
+      // 获取保存目录路径
+      const folderPath = directoryHandle ? directoryHandle.name : null;
+      
+      updateCompareView(
+        originalImageSrc, 
+        images[currentImageIndex].src,
+        originalName,
+        downloadFileName,
+        folderPath
+      );
 
       if (lightboxImg) lightboxImg.style.display = 'none';
       if (lightboxCompareView) lightboxCompareView.classList.remove('hidden');
@@ -1267,18 +1393,32 @@
     }
   }
   
+  // 关闭 lightbox 并重置状态
+  function closeLightboxAndReset() {
+    lightbox.classList.remove('active');
+    currentImageIndex = -1;
+    exitCompareMode();
+    // 恢复导航按钮显示（批量预览模式下被隐藏）
+    if (lightbox.dataset.batchPreview === 'true') {
+      // 释放省内存模式下的临时 Object URL
+      if (lightbox.dataset.tempObjectUrl) {
+        URL.revokeObjectURL(lightbox.dataset.tempObjectUrl);
+        delete lightbox.dataset.tempObjectUrl;
+      }
+      lightbox.dataset.batchPreview = 'false';
+      if (lightboxPrev) lightboxPrev.style.display = '';
+      if (lightboxNext) lightboxNext.style.display = '';
+    }
+  }
+
   if (lightbox && closeLightbox) {
     closeLightbox.addEventListener('click', (e) => {
       e.stopPropagation();
-      lightbox.classList.remove('active');
-      currentImageIndex = -1;
-      exitCompareMode(); // 关闭时重置对比模式
+      closeLightboxAndReset();
     });
 
     lightbox.addEventListener('click', () => {
-      lightbox.classList.remove('active');
-      currentImageIndex = -1;
-      exitCompareMode(); // 关闭时重置对比模式
+      closeLightboxAndReset();
     });
 
     // Prevent closing when clicking on the image
@@ -1323,9 +1463,7 @@
       if (!lightbox.classList.contains('active')) return;
 
       if (e.key === 'Escape') {
-        lightbox.classList.remove('active');
-        currentImageIndex = -1;
-        exitCompareMode(); // ESC 关闭时重置对比模式
+        closeLightboxAndReset();
       } else if (e.key === 'ArrowLeft') {
         showPrevImage();
       } else if (e.key === 'ArrowRight') {
@@ -1386,6 +1524,767 @@
         isDragging = false;
         floatingActions.releasePointerCapture(e.pointerId);
         floatingActions.classList.remove('shadow-xl');
+      }
+    });
+  }
+
+  // ========== 批量编辑模式 ==========
+  const batchImageUpload = document.getElementById('batchImageUpload');
+  const batchSelectFilesBtn = document.getElementById('batchSelectFilesBtn');
+  const batchSelectDirBtn = document.getElementById('batchSelectDirBtn');
+  const batchFileInput = document.getElementById('batchFileInput');
+  const batchGridContainer = document.getElementById('batchGridContainer');
+  const batchGrid = document.getElementById('batchGrid');
+  const batchImageCount = document.getElementById('batchImageCount');
+  const batchSelectAllBtn = document.getElementById('batchSelectAllBtn');
+  const batchClearBtn = document.getElementById('batchClearBtn');
+  const batchProgressContainer = document.getElementById('batchProgressContainer');
+  const batchProgressBar = document.getElementById('batchProgressBar');
+  const batchProgressText = document.getElementById('batchProgressText');
+  const batchLogContainer = document.getElementById('batchLogContainer');
+  const batchLogList = document.getElementById('batchLogList');
+  const batchLogCopyBtn = document.getElementById('batchLogCopyBtn');
+  const batchLogClearBtn = document.getElementById('batchLogClearBtn');
+  const batchRangeStart = document.getElementById('batchRangeStart');
+  const batchRangeEnd = document.getElementById('batchRangeEnd');
+  const batchTotalCount = document.getElementById('batchTotalCount');
+  const batchSkipExisting = document.getElementById('batchSkipExisting');
+  const batchShowPreview = document.getElementById('batchShowPreview');
+  const batchMemorySaver = document.getElementById('batchMemorySaver');
+
+  // 批量编辑状态
+  let batchFiles = []; // 存储所有导入的 File 对象
+  let batchSelectedSet = new Set(); // 存储选中的索引
+  let batchProcessing = false;
+  let batchLogs = []; // 存储日志
+  let batchObjectURLs = []; // 省内存模式：跟踪 Object URL 以便释放
+  const BATCH_CONCURRENCY = 3; // 最大并发数
+  const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/jpg'];
+
+  // 检测目录选择 API 支持
+  const supportsDirectoryPicker = 'showDirectoryPicker' in window;
+  if (!supportsDirectoryPicker && batchSelectDirBtn) {
+    batchSelectDirBtn.style.display = 'none';
+  }
+
+  // 扩展模式切换函数
+  const originalSwitchImagineMode = switchImagineMode;
+  switchImagineMode = function(mode) {
+    imagineMode = mode;
+    imagineModeBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.imagineMode === mode));
+    
+    // 显示/隐藏编辑模式上传区域
+    if (editImageUpload) {
+      editImageUpload.classList.toggle('hidden', mode !== 'edit');
+    }
+    
+    // 显示/隐藏批量编辑模式上传区域
+    if (batchImageUpload) {
+      batchImageUpload.classList.toggle('hidden', mode !== 'batch');
+    }
+  };
+
+  // 过滤有效图片文件
+  function filterImageFiles(files) {
+    return Array.from(files).filter(file => {
+      const type = (file.type || '').toLowerCase();
+      if (ALLOWED_TYPES.includes(type)) return true;
+      // 通过扩展名判断
+      const ext = (file.name || '').split('.').pop().toLowerCase();
+      return ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
+    });
+  }
+
+  // 添加批量图片
+  async function addBatchFiles(files) {
+    const validFiles = filterImageFiles(files);
+    if (validFiles.length === 0) {
+      toast('没有找到有效的图片文件', 'warning');
+      return;
+    }
+
+    // 追加到现有文件列表
+    const startIndex = batchFiles.length;
+    batchFiles.push(...validFiles);
+
+    // 默认全选新添加的图片
+    validFiles.forEach((_, i) => {
+      batchSelectedSet.add(startIndex + i);
+    });
+
+    renderBatchGrid();
+    toast(`已添加 ${validFiles.length} 张图片`, 'success');
+  }
+
+  // 从目录读取图片
+  async function readDirectoryFiles(dirHandle) {
+    const files = [];
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        const file = await entry.getFile();
+        if (filterImageFiles([file]).length > 0) {
+          files.push(file);
+        }
+      }
+    }
+    return files;
+  }
+
+  // 渲染批量图片网格
+  function renderBatchGrid() {
+    if (!batchGrid || !batchGridContainer || !batchImageCount) return;
+
+    if (batchFiles.length === 0) {
+      batchGridContainer.classList.add('hidden');
+      updateBatchSelectedCount();
+      return;
+    }
+
+    batchGridContainer.classList.remove('hidden');
+    
+    // 根据预览开关决定是否显示缩略图
+    const showPreview = batchShowPreview?.checked;
+    if (showPreview) {
+      batchGrid.classList.remove('hidden');
+    } else {
+      batchGrid.classList.add('hidden');
+    }
+
+    batchGrid.innerHTML = '';
+    revokeBatchObjectURLs(); // 释放旧的 Object URL
+
+    const memorySaverEnabled = batchMemorySaver?.checked;
+
+    batchFiles.forEach((file, index) => {
+      const card = document.createElement('div');
+      card.className = 'batch-image-card';
+      card.dataset.index = index;
+
+      // 设置选中状态
+      if (batchSelectedSet.has(index)) {
+        card.classList.add('selected');
+      } else {
+        card.classList.add('unselected');
+      }
+
+      // 图片缩略图
+      const img = document.createElement('img');
+      img.alt = file.name;
+      img.loading = 'lazy';
+
+      // 生成缩略图
+      if (memorySaverEnabled) {
+        // 省内存模式：用 Object URL 替代 base64
+        const objUrl = URL.createObjectURL(file);
+        img.src = objUrl;
+        batchObjectURLs.push(objUrl);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.src = e.target.result;
+          card.dataset.imageUrl = e.target.result; // 存储用于预览
+        };
+        reader.readAsDataURL(file);
+      }
+
+      // 选择框 - 右上角，更大点击区域
+      const checkbox = document.createElement('div');
+      checkbox.className = 'batch-image-checkbox';
+      checkbox.innerHTML = '<div class="batch-image-checkbox-inner"></div>';
+      checkbox.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleBatchSelection(index);
+      });
+
+      // 删除按钮 - 左上角，仅非选中状态显示
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'batch-image-delete';
+      deleteBtn.innerHTML = '&times;';
+      deleteBtn.title = '删除图片';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeBatchFile(index);
+      });
+
+      // 文件名
+      const nameLabel = document.createElement('div');
+      nameLabel.className = 'batch-image-name';
+      nameLabel.textContent = file.name;
+
+      card.appendChild(img);
+      card.appendChild(checkbox);
+      card.appendChild(deleteBtn);
+      card.appendChild(nameLabel);
+
+      // 点击图片预览大图
+      card.addEventListener('click', () => {
+        openBatchPreview(index);
+      });
+
+      batchGrid.appendChild(card);
+    });
+
+    updateBatchSelectedCount();
+  }
+
+  // 删除单个批量图片
+  function removeBatchFile(index) {
+    batchFiles.splice(index, 1);
+    // 更新选中集合的索引
+    const newSelectedSet = new Set();
+    batchSelectedSet.forEach(i => {
+      if (i < index) {
+        newSelectedSet.add(i);
+      } else if (i > index) {
+        newSelectedSet.add(i - 1);
+      }
+      // i === index 的被删除，不添加
+    });
+    batchSelectedSet = newSelectedSet;
+    renderBatchGrid();
+    toast('已删除图片', 'success');
+  }
+
+  // 打开批量图片预览
+  function openBatchPreview(index) {
+    const memorySaverEnabled = batchMemorySaver?.checked;
+    let previewUrl = null;
+
+    if (memorySaverEnabled) {
+      // 省内存模式：按需创建临时 Object URL
+      const file = batchFiles[index];
+      if (!file) return;
+      previewUrl = URL.createObjectURL(file);
+    } else {
+      const card = batchGrid?.querySelector(`[data-index="${index}"]`);
+      if (!card || !card.dataset.imageUrl) return;
+      previewUrl = card.dataset.imageUrl;
+    }
+
+    // 使用现有的 lightbox 显示预览
+    if (lightboxImg && lightbox) {
+      lightboxImg.src = previewUrl;
+      // 隐藏对比按钮（批量预览不需要对比）
+      if (lightboxCompareBtn) {
+        lightboxCompareBtn.classList.add('hidden');
+      }
+      lightbox.classList.add('active');
+      // 标记为批量预览模式，禁用左右导航
+      lightbox.dataset.batchPreview = 'true';
+      // 省内存模式：记录临时 URL，关闭时释放
+      if (memorySaverEnabled) {
+        lightbox.dataset.tempObjectUrl = previewUrl;
+      }
+      if (lightboxPrev) lightboxPrev.style.display = 'none';
+      if (lightboxNext) lightboxNext.style.display = 'none';
+    }
+  }
+
+  // 切换单个图片选中状态
+  function toggleBatchSelection(index) {
+    if (batchSelectedSet.has(index)) {
+      batchSelectedSet.delete(index);
+    } else {
+      batchSelectedSet.add(index);
+    }
+    updateBatchCardState(index);
+    updateBatchSelectedCount(); // 更新选中数量显示
+  }
+
+  // 更新单个卡片状态
+  function updateBatchCardState(index) {
+    const card = batchGrid?.querySelector(`[data-index="${index}"]`);
+    if (!card) return;
+
+    if (batchSelectedSet.has(index)) {
+      card.classList.add('selected');
+      card.classList.remove('unselected');
+    } else {
+      card.classList.remove('selected');
+      card.classList.add('unselected');
+    }
+  }
+
+  // 更新选中数量显示
+  function updateBatchSelectedCount() {
+    if (batchImageCount) {
+      batchImageCount.textContent = batchSelectedSet.size;
+    }
+    // 更新范围设置
+    updateBatchRangeSettings();
+  }
+
+  // 更新范围设置
+  function updateBatchRangeSettings() {
+    const total = batchFiles.length;
+    if (batchTotalCount) {
+      batchTotalCount.textContent = total;
+    }
+    if (batchRangeEnd && total > 0) {
+      batchRangeEnd.max = total;
+      if (parseInt(batchRangeEnd.value, 10) < 1 || parseInt(batchRangeEnd.value, 10) > total) {
+        batchRangeEnd.value = total;
+      }
+    }
+    if (batchRangeStart && total > 0) {
+      batchRangeStart.max = total;
+      if (parseInt(batchRangeStart.value, 10) < 1) {
+        batchRangeStart.value = 1;
+      }
+    }
+  }
+
+  // ========== 日志功能 ==========
+  function addBatchLog(type, message) {
+    const now = new Date();
+    const timeStr = now.toTimeString().slice(0, 8);
+    const logEntry = { type, message, time: timeStr, timestamp: now.getTime() };
+    batchLogs.push(logEntry);
+
+    // 显示日志容器
+    if (batchLogContainer) {
+      batchLogContainer.classList.remove('hidden');
+    }
+
+    // 添加日志项
+    if (batchLogList) {
+      const item = document.createElement('div');
+      item.className = 'batch-log-item';
+      item.innerHTML = `
+        <span class="batch-log-time">${timeStr}</span>
+        <span class="batch-log-type ${type}">${getLogTypeLabel(type)}</span>
+        <span class="batch-log-message">${escapeHtml(message)}</span>
+      `;
+      batchLogList.appendChild(item);
+      // 自动滚动到底部
+      batchLogList.scrollTop = batchLogList.scrollHeight;
+    }
+  }
+
+  function getLogTypeLabel(type) {
+    const labels = {
+      info: 'INFO',
+      success: '成功',
+      warn: '警告',
+      error: '错误',
+      skip: '跳过'
+    };
+    return labels[type] || type.toUpperCase();
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function clearBatchLogs() {
+    batchLogs = [];
+    if (batchLogList) {
+      batchLogList.innerHTML = '';
+    }
+    if (batchLogContainer) {
+      batchLogContainer.classList.add('hidden');
+    }
+  }
+
+  function copyBatchLogs() {
+    if (batchLogs.length === 0) {
+      toast('没有日志可复制', 'warning');
+      return;
+    }
+    const text = batchLogs.map(log => `[${log.time}] [${getLogTypeLabel(log.type)}] ${log.message}`).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      toast('日志已复制到剪贴板', 'success');
+    }).catch(() => {
+      toast('复制失败', 'error');
+    });
+  }
+
+  // 检查文件是否存在于目标目录
+  async function checkFileExists(filename) {
+    if (!directoryHandle) return false;
+    try {
+      await directoryHandle.getFileHandle(filename, { create: false });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 获取输出文件名（保持原文件名）
+  function getOutputFilename(originalFilename, ext) {
+    const lastDot = originalFilename.lastIndexOf('.');
+    const baseName = lastDot > 0 ? originalFilename.substring(0, lastDot) : originalFilename;
+    return `${baseName}.${ext}`;
+  }
+
+  // 全选
+  function batchSelectAll() {
+    batchFiles.forEach((_, i) => batchSelectedSet.add(i));
+    // 增量更新现有卡片 class，避免全量重建 DOM
+    const cards = batchGrid?.querySelectorAll('.batch-image-card');
+    if (cards) {
+      cards.forEach(card => {
+        card.classList.add('selected');
+        card.classList.remove('unselected');
+      });
+    }
+    updateBatchSelectedCount();
+  }
+
+  // 释放所有批量缩略图的 Object URL
+  function revokeBatchObjectURLs() {
+    batchObjectURLs.forEach(url => URL.revokeObjectURL(url));
+    batchObjectURLs = [];
+  }
+
+  // 清空批量图片
+  function clearBatchFiles() {
+    revokeBatchObjectURLs();
+    batchFiles = [];
+    batchSelectedSet.clear();
+    renderBatchGrid();
+    clearBatchErrors();
+    hideBatchProgress();
+  }
+
+  // 获取选中的文件（0选中=全选）
+  function getSelectedBatchFiles() {
+    const getFileWithDataUrl = (file, index) => {
+      const card = batchGrid?.querySelector(`[data-index="${index}"]`);
+      const originalDataUrl = card?.dataset?.imageUrl || null;
+      return { file, index, originalDataUrl };
+    };
+
+    if (batchSelectedSet.size === 0 || batchSelectedSet.size === batchFiles.length) {
+      // 0 选中或全选，返回全部
+      return batchFiles.map((file, index) => getFileWithDataUrl(file, index));
+    }
+    return Array.from(batchSelectedSet).map(index => getFileWithDataUrl(batchFiles[index], index));
+  }
+
+  // 更新进度条
+  function updateBatchProgress(current, total) {
+    if (!batchProgressContainer || !batchProgressBar || !batchProgressText) return;
+    
+    batchProgressContainer.classList.remove('hidden');
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    batchProgressBar.style.width = `${percent}%`;
+    batchProgressText.textContent = `${current}/${total}`;
+  }
+
+  // 隐藏进度条
+  function hideBatchProgress() {
+    if (batchProgressContainer) {
+      batchProgressContainer.classList.add('hidden');
+    }
+    if (batchProgressBar) {
+      batchProgressBar.style.width = '0%';
+    }
+    if (batchProgressText) {
+      batchProgressText.textContent = '准备中...';
+    }
+  }
+
+  // 添加错误信息
+  function addBatchError(filename, message) {
+    if (!batchErrorsContainer || !batchErrorsList) return;
+
+    batchErrorsContainer.classList.remove('hidden');
+
+    const item = document.createElement('div');
+    item.className = 'batch-error-item';
+    item.innerHTML = `
+      <span class="batch-error-filename" title="${filename}">${filename}</span>
+      <span class="batch-error-message">${message}</span>
+    `;
+    batchErrorsList.appendChild(item);
+  }
+
+  // 清空错误
+  function clearBatchErrors() {
+    if (batchErrorsList) {
+      batchErrorsList.innerHTML = '';
+    }
+    if (batchErrorsContainer) {
+      batchErrorsContainer.classList.add('hidden');
+    }
+  }
+
+  // 单张图片编辑处理
+  async function processEditSingle(file, prompt, apiKey) {
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    formData.append('image', file);
+    formData.append('model', 'grok-imagine-1.0-edit');
+    formData.append('n', '1');
+    formData.append('response_format', 'b64_json');
+    formData.append('size', 'original');
+
+    const res = await fetch('/v1/images/edits', {
+      method: 'POST',
+      headers: buildAuthHeaders(apiKey),
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (data.data && data.data.length > 0 && data.data[0].b64_json) {
+      const b64 = data.data[0].b64_json;
+      // 验证返回的是否是有效的 base64 图片数据
+      if (b64.startsWith('error') || b64.length < 100) {
+        throw new Error(b64.startsWith('error') ? b64 : '返回的图片数据无效');
+      }
+      // 简单验证是否是有效 base64（尝试解码前几个字符）
+      try {
+        atob(b64.substring(0, 100));
+      } catch (e) {
+        throw new Error('返回的数据不是有效的 base64 编码');
+      }
+      return b64;
+    }
+    throw new Error('未获取到编辑结果');
+  }
+
+  // 批量处理
+  async function processBatch() {
+    const prompt = promptInput ? promptInput.value.trim() : '';
+    if (!prompt) {
+      toast('请输入提示词', 'error');
+      return;
+    }
+
+    if (batchFiles.length === 0) {
+      toast('请先选择要编辑的图片', 'error');
+      return;
+    }
+
+    const apiKey = await ensureApiKey();
+    if (apiKey === null) {
+      toast('请先登录后台', 'error');
+      return;
+    }
+
+    if (batchProcessing) {
+      toast('正在处理中，请稍候', 'warning');
+      return;
+    }
+
+    batchProcessing = true;
+    setStatus('connecting', '批量处理中...');
+    setButtons(true);
+    clearBatchLogs();
+
+    // 获取范围设置
+    const rangeStart = Math.max(1, parseInt(batchRangeStart?.value, 10) || 1);
+    const rangeEnd = Math.min(batchFiles.length, parseInt(batchRangeEnd?.value, 10) || batchFiles.length);
+    const skipExisting = batchSkipExisting?.checked && directoryHandle;
+
+    addBatchLog('info', `开始批量处理，范围：${rangeStart} - ${rangeEnd}，共 ${rangeEnd - rangeStart + 1} 张`);
+    if (skipExisting) {
+      addBatchLog('info', `已启用跳过已存在文件，保存目录：${directoryHandle.name}`);
+    }
+
+    // 按范围获取文件
+    const selectedFiles = getSelectedBatchFiles();
+    const rangeFiles = selectedFiles.filter((_, idx) => {
+      const fileIndex = idx + 1; // 1-based
+      return fileIndex >= rangeStart && fileIndex <= rangeEnd;
+    });
+
+    const total = rangeFiles.length;
+    let completed = 0;
+    let successCount = 0;
+    let failCount = 0;
+    let skipCount = 0;
+
+    updateBatchProgress(0, total);
+
+    // 分批并行处理
+    for (let i = 0; i < rangeFiles.length; i += BATCH_CONCURRENCY) {
+      const batch = rangeFiles.slice(i, i + BATCH_CONCURRENCY);
+
+      // 预检查跳过已存在的文件
+      const tasksToProcess = [];
+      for (const item of batch) {
+        const { file } = item;
+        const outputFilename = getOutputFilename(file.name, 'png'); // 默认输出 png
+
+        if (skipExisting) {
+          const exists = await checkFileExists(outputFilename);
+          if (exists) {
+            completed++;
+            skipCount++;
+            updateBatchProgress(completed, total);
+            addBatchLog('skip', `${file.name} → ${outputFilename} 已存在，跳过`);
+            continue;
+          }
+        }
+        tasksToProcess.push({ ...item, outputFilename });
+      }
+
+      if (tasksToProcess.length === 0) continue;
+
+      const results = await Promise.allSettled(
+        tasksToProcess.map(({ file }) => processEditSingle(file, prompt, apiKey))
+      );
+
+      // 处理结果
+      for (let idx = 0; idx < results.length; idx++) {
+        const result = results[idx];
+        const { file, index, originalDataUrl, outputFilename } = tasksToProcess[idx];
+        completed++;
+        updateBatchProgress(completed, total);
+
+        if (result.status === 'fulfilled') {
+          successCount++;
+          let b64 = result.value;
+          const memorySaverEnabled = batchMemorySaver?.checked;
+          const showPreview = waterfallShowPreview?.checked;
+
+          // 自动保存（使用原文件名）
+          let savedSuccessfully = false;
+          if (autoDownloadToggle?.checked && directoryHandle) {
+            try {
+              await saveToFileSystem(b64, outputFilename);
+              addBatchLog('success', `${file.name} → ${outputFilename} 保存成功`);
+              savedSuccessfully = true;
+            } catch (e) {
+              addBatchLog('warn', `${file.name} 保存失败：${e.message}`);
+            }
+          } else {
+            addBatchLog('success', `${file.name} 处理成功`);
+          }
+
+          // 添加到瀑布流（如果需要预览）
+          imageCount++;
+          updateCount(imageCount);
+
+          if (memorySaverEnabled && savedSuccessfully) {
+            // 省内存模式 + 保存成功：跳过瀑布流渲染，立即释放 base64
+            b64 = null;
+          } else if (showPreview) {
+            // 省内存模式：不存储原图 base64，改为存储文件引用
+            appendImage(b64, {
+              sequence: imageCount,
+              elapsed_ms: 0,
+              prompt: prompt,
+              originalImage: memorySaverEnabled ? null : originalDataUrl,
+              originalFileIndex: memorySaverEnabled ? index : null, // 存储文件索引用于按需读取
+              downloadFileName: outputFilename,
+            });
+          }
+        } else {
+          failCount++;
+          const errorMsg = result.reason?.message || '处理失败';
+          addBatchLog('error', `${file.name} 失败：${errorMsg}`);
+        }
+      }
+    }
+
+    batchProcessing = false;
+    setButtons(false);
+
+    // 汇总日志
+    addBatchLog('info', `处理完成：成功 ${successCount}，失败 ${failCount}，跳过 ${skipCount}`);
+
+    if (failCount === 0 && skipCount === 0) {
+      setStatus('connected', '批量处理完成');
+      toast(`成功处理 ${successCount} 张图片`, 'success');
+    } else if (successCount > 0) {
+      setStatus('connected', '批量处理完成');
+      toast(`处理完成：成功 ${successCount}，失败 ${failCount}，跳过 ${skipCount}`, 'warning');
+    } else if (skipCount > 0 && failCount === 0) {
+      setStatus('connected', '全部跳过');
+      toast(`所有文件已存在，跳过 ${skipCount} 张`, 'info');
+    } else {
+      setStatus('error', '批量处理失败');
+      toast('所有图片处理失败，请查看日志', 'error');
+    }
+  }
+
+  // 绑定批量编辑事件
+  if (batchSelectFilesBtn && batchFileInput) {
+    batchSelectFilesBtn.addEventListener('click', () => {
+      batchFileInput.click();
+    });
+
+    batchFileInput.addEventListener('change', () => {
+      if (batchFileInput.files && batchFileInput.files.length > 0) {
+        addBatchFiles(batchFileInput.files);
+        batchFileInput.value = ''; // 重置，允许重复选择
+      }
+    });
+  }
+
+  if (batchSelectDirBtn && supportsDirectoryPicker) {
+    batchSelectDirBtn.addEventListener('click', async () => {
+      try {
+        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+        const files = await readDirectoryFiles(dirHandle);
+        if (files.length > 0) {
+          await addBatchFiles(files);
+        } else {
+          toast('所选目录中没有找到图片文件', 'warning');
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          toast('选择目录失败: ' + e.message, 'error');
+        }
+      }
+    });
+  }
+
+  if (batchSelectAllBtn) {
+    batchSelectAllBtn.addEventListener('click', batchSelectAll);
+  }
+
+  if (batchClearBtn) {
+    batchClearBtn.addEventListener('click', clearBatchFiles);
+  }
+
+  if (batchLogCopyBtn) {
+    batchLogCopyBtn.addEventListener('click', copyBatchLogs);
+  }
+
+  if (batchLogClearBtn) {
+    batchLogClearBtn.addEventListener('click', clearBatchLogs);
+  }
+
+  // 预览开关事件
+  if (batchShowPreview) {
+    batchShowPreview.addEventListener('change', () => {
+      renderBatchGrid();
+    });
+  }
+
+  // 瀑布流预览开关事件
+  if (waterfallShowPreview && waterfall) {
+    waterfallShowPreview.addEventListener('change', () => {
+      if (waterfallShowPreview.checked) {
+        waterfall.style.display = '';
+      } else {
+        waterfall.style.display = 'none';
+      }
+    });
+  }
+
+  // 修改开始按钮处理，支持批量模式
+  if (startBtn) {
+    const originalStartHandler = startBtn.onclick;
+    startBtn.onclick = null;
+    startBtn.addEventListener('click', () => {
+      if (imagineMode === 'batch') {
+        processBatch();
+      } else if (imagineMode === 'edit') {
+        startEditMode();
+      } else {
+        startConnection();
       }
     });
   }
