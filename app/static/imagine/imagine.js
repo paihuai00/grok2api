@@ -1582,6 +1582,11 @@
     if (batchImageUpload) {
       batchImageUpload.classList.toggle('hidden', mode !== 'batch');
     }
+    
+    // 更新瀑布流预览状态（批量模式+省内存时禁用预览）
+    if (typeof updateWaterfallPreviewState === 'function') {
+      updateWaterfallPreviewState();
+    }
   };
 
   // 过滤有效图片文件
@@ -2165,11 +2170,18 @@
           imageCount++;
           updateCount(imageCount);
 
-          if (memorySaverEnabled && savedSuccessfully) {
-            // 省内存模式 + 保存成功：跳过瀑布流渲染，立即释放 base64
-            b64 = null;
-          } else if (showPreview) {
-            // 省内存模式：不存储原图 base64，改为存储文件引用
+          // 调试日志
+          console.log('[Batch] 处理结果:', {
+            fileName: file.name,
+            showPreview,
+            memorySaverEnabled,
+            savedSuccessfully,
+            b64Length: b64?.length || 0
+          });
+
+          // 如果开启了显示预览，总是添加到瀑布流
+          if (showPreview) {
+            console.log('[Batch] 添加到瀑布流:', file.name);
             appendImage(b64, {
               sequence: imageCount,
               elapsed_ms: 0,
@@ -2178,6 +2190,11 @@
               originalFileIndex: memorySaverEnabled ? index : null, // 存储文件索引用于按需读取
               downloadFileName: outputFilename,
             });
+          }
+          
+          // 省内存模式 + 保存成功：释放 base64 引用（但已经添加到瀑布流了）
+          if (memorySaverEnabled && savedSuccessfully && !showPreview) {
+            b64 = null;
           }
         } else {
           failCount++;
@@ -2261,6 +2278,35 @@
     batchShowPreview.addEventListener('change', () => {
       renderBatchGrid();
     });
+  }
+
+  // 省内存模式和瀑布流预览的联动
+  const previewDisabledHint = document.getElementById('previewDisabledHint');
+  
+  function updateWaterfallPreviewState() {
+    const memorySaverEnabled = batchMemorySaver?.checked;
+    const isBatchMode = imagineMode === 'batch';
+    
+    if (waterfallShowPreview) {
+      if (isBatchMode && memorySaverEnabled) {
+        // 省内存模式开启时，禁用显示预览
+        waterfallShowPreview.disabled = true;
+        waterfallShowPreview.checked = false;
+        waterfallShowPreview.parentElement?.classList.add('opacity-50', 'cursor-not-allowed');
+        if (previewDisabledHint) previewDisabledHint.classList.remove('hidden');
+        if (waterfall) waterfall.style.display = 'none';
+      } else {
+        // 非省内存模式或非批量模式，启用显示预览
+        waterfallShowPreview.disabled = false;
+        waterfallShowPreview.parentElement?.classList.remove('opacity-50', 'cursor-not-allowed');
+        if (previewDisabledHint) previewDisabledHint.classList.add('hidden');
+      }
+    }
+  }
+
+  // 省内存模式切换时更新预览状态
+  if (batchMemorySaver) {
+    batchMemorySaver.addEventListener('change', updateWaterfallPreviewState);
   }
 
   // 瀑布流预览开关事件
