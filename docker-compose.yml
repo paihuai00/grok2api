@@ -1,10 +1,9 @@
 services:
   grok2api:
     container_name: grok2api
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # image: ghcr.io/wangxingfan/grok2api:latest  # 注释掉远程镜像
+    image: ghcr.io/wangxingfan/grok2api:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["uv pip install pillow httpx --quiet && /app/scripts/init_storage.sh && exec python main.py"]
     ports:
       - "8001:8000"
     environment:
